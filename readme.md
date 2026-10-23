@@ -186,7 +186,97 @@ Behaviour:
 Open `/` on the deployed Worker. It includes a request playground (with anime search and a player preview), an endpoint reference, and a proxy URL builder.
 
 ---
+## How to make use of the Cloudflare Edge network
 
+If you want to deploy this backend proxy script directly to the Cloudflare Edge network (using the worker name **`hat`** with the filename `worker.js`), follow these steps:
+
+### Create `worker.js` for the worker named hat.
+use the code given below
+
+```javascript
+// Replace this with your exact backend URL (e.g., your free Render web service URL)
+const BACKEND_URL = "";
+
+export default {
+  // 1. LIVE PROXY & STATUS HANDLER
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+
+    // ---- STATUS PAGE ROUTE ----  
+    // Accessing your-worker.workers.dev/status will show this health dashboard  
+    if (url.pathname === "/status") {  
+      const startTime = Date.now();  
+      let backendStatus = "Unknown";  
+      let latency = "N/A";
+
+      try {  
+        const res = await fetch(BACKEND_URL);  
+        backendStatus = `${res.status} ${res.statusText}`;  
+        latency = `${Date.now() - startTime}ms`;  
+      } catch (err) {  
+        backendStatus = `Offline / Error: ${err.message}`;  
+      }
+
+      const html = `  
+        <!DOCTYPE html>  
+        <html lang="en">  
+        <head>  
+          <meta charset="UTF-8">  
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">  
+          <title>API Proxy Status</title>  
+          <style>  
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }  
+            .card { background: #1e293b; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 450px; margin: auto; }  
+            h1 { font-size: 1.5rem; margin-top: 0; color: #38bdf8; border-bottom: 1px solid #334155; padding-bottom: 0.75rem; }  
+            .grid { display: grid; grid-template-columns: 120px 1fr; gap: 0.75rem; margin-top: 1rem; }  
+            .label { font-weight: bold; color: #94a3b8; }  
+            .value { font-family: monospace; word-break: break-all; }  
+            .status-ok { color: #4ade80; }  
+            .status-err { color: #f87171; }  
+          </style>  
+        </head>  
+        <body>  
+          <div class="card">  
+            <h1>🌐 Proxy API Gateway Status</h1>  
+            <div class="grid">  
+              <div class="label">Proxy URL:</div>  
+              <div class="value">${url.origin}</div>  
+              <div class="label">Backend Target:</div>  
+              <div class="value">${BACKEND_URL}</div>  
+              <div class="label">Backend Ping:</div>  
+              <div class="value ${backendStatus.startsWith('2') ? 'status-ok' : 'status-err'}">${backendStatus}</div>  
+              <div class="label">Latency:</div>  
+              <div class="value">${latency}</div>  
+              <div class="label">Timestamp:</div>  
+              <div class="value">${new Date().toISOString()}</div>  
+            </div>  
+          </div>  
+        </body>  
+        </html>  
+      `;  
+      return new Response(html, { headers: { "Content-Type": "text/html" } });  
+    }
+
+    // ---- ALL OTHER /... NESTED URLS PROXY ROUTE ----  
+    // Captures the full sub-pathing (e.g., /api/scrape?user=test)  
+    const targetUrl = `${BACKEND_URL}${url.pathname}${url.search}`;
+
+    const modifiedRequest = new Request(targetUrl, {  
+      method: request.method,  
+      headers: request.headers,  
+      body: request.method !== "GET" && request.method !== "HEAD" ? request.body : undefined,  
+      redirect: "manual"  
+    });
+
+    try {  
+      const response = await fetch(modifiedRequest);  
+      return response;  
+    } catch (error) {  
+      return new Response(`Proxy Error: Unable to reach backend. ${error.message}`, { status: 502 });  
+    }  
+  }
+};
+```
 ## Notes
 
 - `npm start` points to `server.js`, which isn't in this repo; use `npm run dev:worker` / `npm run deploy`.
