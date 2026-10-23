@@ -1,220 +1,194 @@
-<div align="center">
+# Anikage API
 
-<img src="public/logo.png" alt="AniKage Player" width="120" />
-
-# AniKage Player
-
-**A serverless HLS video player and downloader, configured entirely by the URL and served from a Cloudflare Worker.**
 **in Worker.js please add your [plyr](https://github.com/Anikage-Group/plyr) and [api](https://github.com/Anikage-Group/Anime-API) urls before deploying. otherwise API will be only partially functional**
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR_USERNAME/plyr)
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR-USERNAME/YOUR-REPO)
 
-</div>
+A Cloudflare Worker that takes an **AniList ID + episode number** and returns one JSON response containing every playable source it can find: HLS streams (wrapped in a ready-to-use player link), embed pages, download links, subtitles, and intro/outro skip times.
+
+It also bundles a **stream proxy** (`/p/…`) that rewrites HLS/DASH manifests so playback works from the browser, and a small **playground page** (`index.html`) served at `/`.
 
 ---
 
-## Overview
-
-AniKage Player is a single-file web app (`public/index.html`) with a thin Cloudflare Worker (`src/index.js`) in front of it. There is no backend and no database. Every link carries its own config: a JSON object that is brotli-compressed and base64url-encoded into the path.
-
-- **Player** at `/e/<data>`, built on [Artplayer](https://github.com/zhw2590582/ArtPlayer) and hls.js
-- **Downloader** at `/d/<data>`, which saves HLS streams segment by segment, or direct mp4/webm/mkv files as a single download
-- **Docs and decode tool** at any other route, with a config reference, a live "try it" box, and a decoder for existing links
-
 ## Features
 
-- HLS (`.m3u8`) playback with quality and audio track selection
-- Auto-detects progressive `mp4` / `webm` / `mkv` streams by content sniffing, not file extension
-- Multiple WebVTT subtitle tracks, each toggled from the Subtitles menu
-- Intro and outro markers on the seek bar, with skip buttons and optional auto-skip
-- Poster image and autoplay support
-- Embeddable in an `<iframe>` from any origin, with a `postMessage` bridge for host control
-- Downloader saves every subtitle track as its own `.vtt` file
-- Worker adds CORS, `Permissions-Policy` (fullscreen, PiP, autoplay) and embed-friendly headers
+- **One endpoint, many providers** – queries several upstream providers in parallel (sub and dub) and merges the results.
+- **Server categories** – sources are grouped by type (see [Response](#response)).
+- **Skip times** – uses the provider's own intro/outro ranges when present, otherwise falls back to AniSkip.
+- **Episode metadata** – title and thumbnail via ani.zip.
+- **Built-in proxy** – referer/header injection, HLS and DASH manifest rewriting, playlist-key decryption, default-audio switching (sub/dub), FlixCloud HD-2 image-segment unwrapping.
+- **SSRF protection** – private/local/loopback addresses and credentialed URLs are rejected.
+- **Playground UI** – test requests, preview the player, browse results and build proxy URLs.
 
-## One-click deploy
-
-Click the button at the top of this README. Cloudflare will clone the repo into your account, set up the Worker and deploy it. No environment variables or secrets are needed.
-
-> **Note:** after you push this project to GitHub, edit the button URL at the top of this file and replace `YOUR_USERNAME/plyr` with your own `owner/repo`.
-
-## Manual deploy
-
-Requirements: [Node.js](https://nodejs.org/) 18+ and a free [Cloudflare account](https://dash.cloudflare.com/sign-up).
-
-```bash
-git clone https://github.com/YOUR_USERNAME/plyr.git
-cd plyr
-npm install
-
-# run locally at http://localhost:8787
-npm run dev
-
-# log in once, then deploy
-npx wrangler login
-npm run deploy
-```
-
-To use a custom domain, add a route or custom domain to the Worker in the Cloudflare dashboard, or in `wrangler.jsonc`.
+---
 
 ## Project structure
 
 ```
-plyr/
-├── public/
-│   ├── index.html      # player, downloader and docs views in one file
-│   ├── logo.png
-│   └── favicon.ico
-├── src/
-│   └── index.js        # Worker: routing + response headers
-├── package.json
-└── wrangler.jsonc      # Worker + static assets config
+Anikage API/
+├── worker.js              # Worker entry: routing, provider aggregation, player-link builder
+├── flixcloud.js           # FlixCloud embed resolver (extracts the m3u8 URL, keys, subtitles, chapters)
+├── index.html             # Playground / docs page (bundled into the Worker as text)
+├── proxy/
+│   ├── proxy-core.js      # Proxy handler: URL parsing, manifest rewriting, redirects, CORS
+│   ├── node-safety.js     # Node-only: DNS-resolving SSRF check (not used by the Worker)
+│   └── wreq-fallback.js   # Node-only: optional wreq-js fallback on 403 (not used by the Worker)
+├── wrangler.toml          # Worker config (service binding, text rule for .html, vars)
+└── package.json           # Scripts and dev dependencies
 ```
 
-## Routes
+> `.wrangler/` is local Wrangler/Miniflare state. Don't commit it – add it to `.gitignore`.
 
-| Route | Result |
-| --- | --- |
-| `/e/<data>` or `/e/?=<data>` | Player |
-| `/d/<data>` or `/d/?=<data>` | Downloader |
-| anything else without a file extension | Docs and decode tool |
+---
 
-The page reads `location.pathname` to decide which view to show. The Worker makes sure `/e/*` and `/d/*` always resolve to the app instead of 404ing, and maps nested asset paths such as `/e/logo.png` back to `/logo.png`.
+## Getting started
 
-## Config schema
+### Requirements
 
-The decoded payload is one JSON object:
+- Node.js ≥ 20
+- A Cloudflare account and [Wrangler](https://developers.cloudflare.com/workers/wrangler/) (installed as a dev dependency)
 
-```json
-{
-  "vid": {
-    "stream": "https://example.com/path/playlist.m3u8"
-  },
-  "thumb": {
-    "exist": true,
-    "thumb": "https://example.com/path/poster.jpg"
-  },
-  "subs": {
-    "exist": true,
-    "tracks": [
-      {
-        "id": "en_full",
-        "label": "English",
-        "url": "https://example.com/path/en.vtt",
-        "default": true
-      }
-    ]
-  },
-  "skip": {
-    "exist": true,
-    "intro": "0,43",
-    "outro": "1305,1320"
-  },
-  "auto": {
-    "ski": false,
-    "sko": false,
-    "autoplay": true
-  },
-  "meta": {
-    "title": "Episode title shown in the downloader",
-    "filename": "download.ts"
-  }
-}
+### Install and run locally
+
+```bash
+npm install
+npm run dev:worker      # wrangler dev
 ```
 
-| Field | Required | Used by | Notes |
-| --- | --- | --- | --- |
-| `vid.stream` | Yes | Player, Downloader | HLS master or media playlist, or a direct mp4/webm/mkv URL |
-| `thumb` | No | Player, Downloader | Poster image; omit or set `exist: false` to skip |
-| `subs` | No | Player, Downloader | Any number of WebVTT tracks |
-| `skip` | No | Player | `"start,end"` in seconds for `intro` and `outro` |
-| `auto` | No | Player | `ski` and `sko` auto-skip intro/outro; `autoplay` starts playback |
-| `meta` | No | Downloader | Display title and suggested filename |
+### Deploy
 
-## Generating links
+**One click:** use the **Deploy to Cloudflare Workers** button at the top of this README. It clones the repo into your GitHub/GitLab account and deploys the Worker to your Cloudflare account.
 
-Browsers can decompress brotli but can't compress it, so links are generated server-side or at build time. Any language with a brotli library works. Reference Node.js snippet:
+Before deploying, note:
 
-```js
-const zlib = require('zlib');
+- `wrangler.toml` has a service binding (`HAT` → `hat`). The upstream `hat` Worker must already exist on your account, or the deploy will fail. Change `service` to your Worker's name, or remove the binding and set `ANIVEXA_API_URL` to a public URL instead.
+- Set `PROXY_TOKEN`, `ALLOWED_HOSTS` and `ALLOWED_ORIGINS` after deploying (Workers dashboard → Settings → Variables) so the proxy isn't open to everyone.
 
-function encode(config) {
-  const compressed = zlib.brotliCompressSync(
-    Buffer.from(JSON.stringify(config), 'utf8'),
-    { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 } }
-  );
-  return compressed.toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, ''); // base64url, unpadded
-}
+**CLI:**
 
-console.log('https://your-worker.workers.dev/e/' + encode(myConfig));
-console.log('https://your-worker.workers.dev/d/' + encode(myConfig));
+```bash
+npm run deploy          # wrangler deploy
 ```
 
-Standard or URL-safe base64, padded or not, all decode fine. To inspect an existing link, open the docs page and use the **Decode tool**.
-
-## Embedding
-
-```html
-<iframe
-  src="https://your-worker.workers.dev/e/<data>"
-  allow="fullscreen; picture-in-picture; autoplay"
-  allowfullscreen
-  style="width:100%; aspect-ratio:16/9; border:0;"
-></iframe>
-```
-
-The embedding page must grant `fullscreen`, `picture-in-picture` and `autoplay` through the `allow` attribute, because iframe permissions can't be widened from inside.
-
-### postMessage API
-
-**Player to host.** Messages have `source: "anikage-player"` and a `type`:
-
-| `type` | Payload |
-| --- | --- |
-| `ready` | `duration` |
-| `status` | `ok`, `attempt` |
-| `play` / `pause` | `currentTime` |
-| `time` | `currentTime`, `duration`, `reason` (`interval` or `seek`) |
-| `ended` | `currentTime`, `duration` |
-| `skipped` | `segment` (`intro` or `outro`), `auto`, `to` |
-
-**Host to player.** Send messages with `source: "anikage-player-host"`:
-
-```js
-const player = iframe.contentWindow;
-
-player.postMessage({ source: 'anikage-player-host', type: 'seek', time: 120 }, '*');
-player.postMessage({ source: 'anikage-player-host', type: 'togglePlay' }, '*');
-```
-
-Available commands: `seek` (`time`), `play`, `pause`, `togglePlay`, `skipIntro`, `skipOutro`, `setAutoSkipIntro` (`value`), `setAutoSkipOutro` (`value`), `setAutoplay` (`value`).
+---
 
 ## Configuration
 
-`wrangler.jsonc` holds the Worker config:
+`wrangler.toml` defines:
+
+| Setting | Purpose |
+| --- | --- |
+| `main = "worker.js"` | Worker entry point |
+| `compatibility_flags = ["nodejs_compat"]` | Needed for `node:zlib`, `node:buffer`, `node:crypto` |
+| `[[rules]]` Text for `**/*.html` | Bundles `index.html` into the Worker |
+| `[[services]] HAT → hat` | Service binding to the upstream "hat" Worker on the same account (avoids Cloudflare error 1042 for Worker → workers.dev calls). Change `service` if your Worker has a different name. |
+
+### Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ANIVEXA_API_URL` | `https://hat.anikage.workers.dev` | Base URL of the upstream provider API |
+| `STREAM_PROXY_URL` | _(unset)_ | External proxy base URL. If unset, the Worker's own `/p/` route is used |
+| `PROXY_TOKEN` | _(unset)_ | If set, proxy requests must send it as `X-Proxy-Token` (or the packed/query `access` field) |
+| `ALLOWED_HOSTS` | _(unset)_ | Comma-separated hostnames the proxy may fetch (subdomains included) |
+| `ALLOWED_ORIGINS` | _(unset)_ | Comma-separated origins for CORS on proxy routes (`*` allowed). Unset = `*` |
+| `PROXY_USER_AGENT` | _(unset)_ | User-Agent used by the proxy when the client doesn't send one |
+
+**The proxy is open by default.** For any public deployment, set `PROXY_TOKEN`, `ALLOWED_HOSTS` and `ALLOWED_ORIGINS`.
+
+---
+
+## API
+
+### `GET /:anilistId/:episode`
+
+Alias: `GET /api/public/watch/:anilistId/:episode`
+
+| Query param | Default | Description |
+| --- | --- | --- |
+| `ap` | `true` | Autoplay flag embedded in the player link |
+| `ski` | `false` | Auto-skip intro flag embedded in the player link |
+| `sko` | `false` | Auto-skip outro flag embedded in the player link |
+
+Boolean values accept `true/1/yes/y` and `false/0/no/n`.
+
+```bash
+curl https://<your-worker>/21/1
+curl "https://<your-worker>/21/1?ski=true&sko=true&ap=false"
+```
+
+### Response
 
 ```jsonc
 {
-  "name": "plyr",                     // change this to rename your Worker
-  "main": "src/index.js",
-  "compatibility_date": "2025-09-01",
-  "assets": {
-    "directory": "./public",
-    "binding": "ASSETS",
-    "run_worker_first": true          // so /e/* and /d/* never hit the static router
-  }
+  "anilistId": 21,
+  "malId": 21,
+  "episode": 1,
+  "title": "Episode title",
+  "player": "https://plyr.anikage.workers.dev/e/",
+  "skip": { "exist": true, "intro": "12,102", "outro": "1320,1410" },
+  "servers": {
+    "h-sub": { "<label>": "<player link>" },   // HLS, no subtitle tracks
+    "s-sub": { "<label>": "<player link>" },   // HLS with subtitle tracks
+    "dub":   { "<label>": "<player link>" },   // HLS dub
+    "e-sub": { "<label>": "<embed url>"  },    // embed pages (sub)
+    "e-dub": { "<label>": "<embed url>"  },    // embed pages (dub)
+    "v-sub": { "<name>":  "<embed url>"  },    // generated third-party embed URLs (sub)
+    "v-dub": { "<name>":  "<embed url>"  }     // generated third-party embed URLs (dub)
+  },
+  "downloads": [{ "server": "…", "label": "…", "url": "…" }],
+  "providers": { "flix": "ok", "anipm": "ok", "anikoto": "empty", "aniwaves": "down", "animegg": "ok" }
 }
 ```
 
+- Empty server categories are omitted.
+- `providers` status is `ok` (returned sources), `empty` (responded with nothing usable) or `down` (no response).
+- Player links are the payload (title, proxied stream, thumbnail, subtitles, skip times, autoplay) brotli-compressed and base64-encoded onto the `player` URL.
+
+**Errors:** `400` invalid id/episode · `404` unknown route · `502` upstream failure.
+Responses are sent with `Cache-Control: public, max-age=1000` and open CORS (`GET, OPTIONS`).
+
+### Providers
+
+| Source | Notes |
+| --- | --- |
+| Flix (ReAnime / FlixCloud) | Embed pages are resolved into HLS through `flixcloud.js`; direct embeds also listed in `e-sub` / `e-dub` |
+| `anipm`, `anikoto`, `aniwaves`, `animegg` | Queried through the upstream API (`/watch/:provider/:id/:audio/:provider-:episode`) |
+| Video servers (`v-sub` / `v-dub`) | URL templates in `VIDEO_SERVERS` filled with the AniList/MAL id, episode and language |
+
+To add or remove a provider, edit `PROVIDERS` and `PROVIDER_NAMES` in `worker.js`; to add a generated embed server, add an entry to `VIDEO_SERVERS` (placeholders: `{ani}`, `{mal}`, `{ep}`, `{lang}`).
+
+### Proxy routes
+
+| Route | Description |
+| --- | --- |
+| `GET /p/<base64url>` | Packed form. The payload is NUL-separated fields: `url, ref, referer, headers, key, playlist_key, unwrap, access, audio` (trailing empty fields may be dropped) |
+| `GET /proxy?url=<target>` | Query form. Also accepts `ref`, `headers` (JSON), `key`, `playlist_key`, `unwrap`, `access`, `audio` |
+| `GET /health` | Returns `{"status":"ok"}` |
+
+Behaviour:
+
+- HLS (`.m3u8`) and DASH (`.mpd`) manifests are detected by type, extension or content sniffing, and every URL inside is rewritten to go back through the proxy.
+- `playlist_key` / `key` decrypts XOR-obfuscated manifests.
+- `audio=dub` (or a language code) sets the matching audio rendition as default in master playlists.
+- `unwrap=flixcloud-hd2` unwraps image-disguised transport-stream segments.
+- Max manifest size 2 MB, max wrapped segment 48 MB, 20 s upstream timeout, up to 8 redirects.
+- Methods: `GET`, `HEAD`, `OPTIONS`.
+
+### Debug routes
+
+`/_debug` and `/_flix/:anilistId/:episode` return raw upstream data. They are marked temporary in the code – remove or protect them before going public.
+
+---
+
+## Playground
+
+Open `/` on the deployed Worker. It includes a request playground (with anime search and a player preview), an endpoint reference, and a proxy URL builder.
+
+---
+
 ## Notes
 
-- Stream, thumbnail and subtitle hosts must allow cross-origin requests (CORS) for the player and downloader to fetch them from the browser.
-- Only `GET`, `HEAD` and `OPTIONS` requests are accepted; anything else returns `405`.
-- Third-party libraries (Artplayer, hls.js, Tailwind, Font Awesome) load from CDNs at runtime.
-
-## License
-
-[MIT](https://choosealicense.com/licenses/mit/) License
+- `npm start` points to `server.js`, which isn't in this repo; use `npm run dev:worker` / `npm run deploy`.
+- `proxy/node-safety.js` and `proxy/wreq-fallback.js` are for running the proxy under Node (DNS-level private-address checks and a browser-impersonating fallback on `403`). The Worker build doesn't import them.
+- Streams come from third-party providers. You're responsible for making sure your use complies with the law and those providers' terms.
