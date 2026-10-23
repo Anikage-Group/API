@@ -5,7 +5,7 @@
 # AniKage Player
 
 **A serverless HLS video player and downloader, configured entirely by the URL and served from a Cloudflare Worker.**
-
+**in Worker.js please add your [plyr](https://github.com/Anikage-Group/plyr) and [api](https://github.com/Anikage-Group/Anime-API) urls before deploying. otherwise API will be only partially functional**
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR_USERNAME/plyr)
 
 </div>
