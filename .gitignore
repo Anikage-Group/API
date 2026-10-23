@@ -1,0 +1,41 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Production Build / Output Directories
+/dist
+/build
+/.svelte-kit
+/.output
+/.nuxt
+
+# Cloudflare Wrangler local state & data
+.wrangler/
+
+# Environment variables & local configuration
+.env
+.env.*
+!.env.example
+
+# Editor directories and files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.history/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini

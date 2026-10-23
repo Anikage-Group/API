@@ -1,0 +1,17 @@
+name = "api"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Bundle index.html into the Worker as text.
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+
+# Internal call to the "hat" Worker on the same account (change service if its Worker name differs).
+[[services]]
+binding = "HAT"
+service = "hat"
+
+[vars]

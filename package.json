@@ -1,0 +1,14 @@
+{
+  "name": "anikoto",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "dev:worker": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "optionalDependencies": { "wreq-js": "^3.2.0" },
+  "devDependencies": { "wrangler": "^4.0.0" }
+}
